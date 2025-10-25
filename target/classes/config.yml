@@ -1,0 +1,25 @@
+ranks:
+  recruit:
+    display: "Recruit"
+    cost: 1000
+    description: "Your first rank"
+    requirements:
+      "%statistic_mine_block%": 1000
+      "%mcmmo_power_level%": 50
+    commands:
+      - "lp user %player_name% parent set recruit"
+
+  veteran:
+    display: "Veteran"
+    cost: 10000
+    description: "A seasoned player"
+    requirements:
+      "%mcmmo_power_level%": 250
+      "%playtime_time%": 60000
+    commands:
+      - "lp user %player_name% parent set veteran"
+
+labels:
+  statistic_mine_block: "Blocks Mined"
+  mcmmo_power_level: "MCMMO Power Level"
+  playtime_time: "Playtime (minutes)"

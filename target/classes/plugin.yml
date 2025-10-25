@@ -1,0 +1,27 @@
+name: FlexRank
+version: 1.0.0
+main: com.thanthal.flexrank.FlexRank
+api-version: 1.20
+author: Thanthal
+description: A flexible rank system with GUI support for Minecraft.
+
+commands:
+  rankup:
+    description: Rank up to the next rank if requirements are met
+    usage: /rankup
+    permission: flexrank.rankup
+    permission-message: You don’t have permission to use this command.
+
+  rankgui:
+    description: Open the rank GUI
+    usage: /rankgui
+    permission: flexrank.rankgui
+    permission-message: You don’t have permission to use this command.
+
+permissions:
+  flexrank.rankup:
+    description: Allows a player to use /rankup
+    default: true
+  flexrank.rankgui:
+    description: Allows a player to open the rank GUI
+    default: true
