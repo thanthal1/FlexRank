@@ -55,31 +55,33 @@ public class RankGUI implements Listener {
     for (int i = 0; i < ranks.size(); i++) {
         String rankKey = ranks.get(i);
 
-        // Try to load a saved ItemStack first (treat heads like any other item)
+        // Prefer using a stored ItemStack from config if available (preserves skull-owner/profile data)
         int rankNumber = i + 1;
-        ItemStack storedItem = plugin.getConfig().getItemStack("heads." + rankNumber);
-        ItemStack item;
-        SkullMeta meta = null;
-        TextureData textureData = null;
-        if (storedItem != null) {
-            item = storedItem.clone();
-            if (item.getItemMeta() instanceof SkullMeta sm) meta = sm;
-        } else {
-            // Create default player head and try legacy/raw config formats
+        ItemStack item = null;
+        try {
+            ItemStack stored = plugin.getConfig().getItemStack("heads." + rankNumber);
+            if (stored != null) {
+                item = stored.clone();
+                plugin.getLogger().info("Using stored ItemStack for rank " + rankNumber);
+            }
+        } catch (Exception ignored) {}
+        if (item == null) {
+            // Create default player head
             item = new ItemStack(Material.PLAYER_HEAD);
-            meta = (SkullMeta) item.getItemMeta();
-            Object rawHead = plugin.getConfig().get("heads." + rankNumber);
-            if (rawHead == null) {
-                plugin.getLogger().info("No head configured for rank " + rankNumber + " (" + rankKey + ")");
+        }
+    SkullMeta meta = (SkullMeta) item.getItemMeta();        // Get texture data from config (supports plain string or serialized ItemStack/map with signature)
+        Object rawHead = plugin.getConfig().get("heads." + rankNumber);
+        TextureData textureData = null;
+        if (rawHead == null) {
+            plugin.getLogger().info("No head configured for rank " + rankNumber + " (" + rankKey + ")");
+        } else {
+            if (rawHead instanceof String) {
+                textureData = new TextureData((String) rawHead, null);
             } else {
-                if (rawHead instanceof String) {
-                    textureData = new TextureData((String) rawHead, null);
-                } else {
-                    // Log the raw object so we can see what's stored in config
-                    plugin.getLogger().info("Head config for rank " + rankNumber + " is type: " + rawHead.getClass().getName() + " -> " + rawHead.toString());
-                    // Try to find a texture value and optional signature inside the structure
-                    textureData = findTextureDataInObject(rawHead);
-                }
+                // Log the raw object so we can see what's stored in config
+                plugin.getLogger().info("Head config for rank " + rankNumber + " is type: " + rawHead.getClass().getName() + " -> " + rawHead.toString());
+                // Try to find a texture value and optional signature inside the structure
+                textureData = findTextureDataInObject(rawHead);
             }
         }
 
@@ -173,8 +175,178 @@ public class RankGUI implements Listener {
 
                 if (profileField != null) {
                     profileField.setAccessible(true);
-                    profileField.set(meta, profile);
-                    plugin.getLogger().info("Applied custom head for rank " + rankKey + " (in class " + profileField.getDeclaringClass().getName() + ")");
+                    try {
+                        profileField.set(meta, profile);
+                        plugin.getLogger().info("Applied custom head for rank " + rankKey + " (in class " + profileField.getDeclaringClass().getName() + ")");
+                    } catch (IllegalArgumentException | IllegalAccessException iae) {
+                        // Could not set GameProfile into the implementation's profile field (different internal type).
+                        // Try to wrap the GameProfile into the server-specific CraftPlayerProfile wrapper if available
+                        try {
+                            // Common CraftPlayerProfile class name used in dumps
+                            String[] craftNames = new String[]{
+                                "org.bukkit.craftbukkit.inventory.CraftPlayerProfile",
+                                "org.bukkit.craftbukkit.profile.CraftPlayerProfile",
+                                "org.bukkit.craftbukkit.profile.CraftPlayerprofile",
+                                "org.bukkit.craftbukkit.v1_\u005F_1.CraftPlayerProfile"};
+                            boolean wrapped = false;
+                            for (String cname : craftNames) {
+                                try {
+                                    Class<?> craftProfileClass = Class.forName(cname);
+                                    // Try constructor GameProfile
+                                    try {
+                                        java.lang.reflect.Constructor<?> ctor = craftProfileClass.getConstructor(com.mojang.authlib.GameProfile.class);
+                                        Object craftProfile = ctor.newInstance(profile);
+                                        profileField.set(meta, craftProfile);
+                                        plugin.getLogger().info("Applied custom head for rank " + rankKey + " via CraftPlayerProfile wrapper");
+                                        wrapped = true;
+                                        break;
+                                    } catch (NoSuchMethodException ns) {
+                                        // Try static factory method that accepts GameProfile
+                                        try {
+                                            java.lang.reflect.Method m = craftProfileClass.getMethod("asCraftPlayerProfile", com.mojang.authlib.GameProfile.class);
+                                            Object craftProfile = m.invoke(null, profile);
+                                            profileField.set(meta, craftProfile);
+                                            plugin.getLogger().info("Applied custom head for rank " + rankKey + " via CraftPlayerProfile.asCraftPlayerProfile");
+                                            wrapped = true;
+                                            break;
+                                        } catch (NoSuchMethodException ns2) {
+                                            // try alternate factory name
+                                            try {
+                                                java.lang.reflect.Method m2 = craftProfileClass.getMethod("asCraftProfile", com.mojang.authlib.GameProfile.class);
+                                                Object craftProfile = m2.invoke(null, profile);
+                                                profileField.set(meta, craftProfile);
+                                                plugin.getLogger().info("Applied custom head for rank " + rankKey + " via CraftPlayerProfile.asCraftProfile");
+                                                wrapped = true;
+                                                break;
+                                            } catch (NoSuchMethodException ns3) {
+                                                // give up on this class
+                                            }
+                                        }
+                                    }
+                                } catch (ClassNotFoundException cnf) {
+                                    // try next possible class name
+                                }
+                            }
+                            if (wrapped) continue;
+                        } catch (Exception wrapEx) {
+                            // ignore and fall back to Paper approach
+                        }
+                        // Try Paper's PlayerProfile API as a fallback (use reflection so plugin still runs on Spigot)
+                        try {
+                            Class<?> bukkitClass = Class.forName("org.bukkit.Bukkit");
+                            Class<?> playerProfileClass = Class.forName("org.bukkit.profile.PlayerProfile");
+                            Class<?> profilePropertyClass = Class.forName("org.bukkit.profile.ProfileProperty");
+
+                            java.lang.reflect.Method createProfile = bukkitClass.getMethod("createProfile", java.util.UUID.class);
+                            Object paperProfile = createProfile.invoke(null, java.util.UUID.randomUUID());
+
+                            Object prop = null;
+                            // Try to construct a ProfileProperty that preserves signatures when present (3-arg constructor)
+                            try {
+                                if (signature != null && !signature.isEmpty()) {
+                                    try {
+                                        java.lang.reflect.Constructor<?> propCtor3 = profilePropertyClass.getConstructor(String.class, String.class, String.class);
+                                        prop = propCtor3.newInstance("textures", originalValue, signature);
+                                    } catch (NoSuchMethodException ns) {
+                                        // fallback to 2-arg if 3-arg not available
+                                        java.lang.reflect.Constructor<?> propCtor2 = profilePropertyClass.getConstructor(String.class, String.class);
+                                        prop = propCtor2.newInstance("textures", originalValue);
+                                    }
+                                } else {
+                                    java.lang.reflect.Constructor<?> propCtor2 = profilePropertyClass.getConstructor(String.class, String.class);
+                                    prop = propCtor2.newInstance("textures", encodedTexture);
+                                }
+                            } catch (NoSuchMethodException ns2) {
+                                // leave prop null and try other additions below
+                            }
+
+                            // Try addProperty or setProperty depending on API
+                            try {
+                                java.lang.reflect.Method addProp = playerProfileClass.getMethod("addProperty", profilePropertyClass);
+                                if (prop != null) addProp.invoke(paperProfile, prop);
+                            } catch (NoSuchMethodException ex) {
+                                try {
+                                    java.lang.reflect.Method setProp = playerProfileClass.getMethod("setProperty", profilePropertyClass);
+                                    if (prop != null) setProp.invoke(paperProfile, prop);
+                                } catch (NoSuchMethodException ex2) {
+                                    // try getProperties -> add
+                                    java.lang.reflect.Method getProps = playerProfileClass.getMethod("getProperties");
+                                    Object props = getProps.invoke(paperProfile);
+                                    if (props instanceof java.util.Collection && prop != null) {
+                                        ((java.util.Collection) props).add(prop);
+                                    }
+                                }
+                            }
+
+                            java.lang.reflect.Method setPlayerProfile = meta.getClass().getMethod("setPlayerProfile", playerProfileClass);
+                            setPlayerProfile.invoke(meta, paperProfile);
+                            plugin.getLogger().info("Applied custom head for rank " + rankKey + " via Paper PlayerProfile fallback");
+                        } catch (ClassNotFoundException cnf) {
+                            // Paper API not present; will fall through to warning below
+                        } catch (Exception ex) {
+                            plugin.getLogger().warning("Paper PlayerProfile fallback failed for rank " + rankKey + ": " + ex.getMessage());
+                        }
+
+                        // Final fallback: create a new ItemStack (display-only) and set the PlayerProfile on its fresh SkullMeta.
+                        try {
+                            Class<?> bukkitClass2 = Class.forName("org.bukkit.Bukkit");
+                            Class<?> playerProfileClass2 = Class.forName("org.bukkit.profile.PlayerProfile");
+                            Class<?> profilePropertyClass2 = Class.forName("org.bukkit.profile.ProfileProperty");
+                            java.lang.reflect.Method createProfile2 = bukkitClass2.getMethod("createProfile", java.util.UUID.class);
+                            Object paperProfile2 = createProfile2.invoke(null, java.util.UUID.randomUUID());
+
+                            Object prop2 = null;
+                            try {
+                                if (signature != null && !signature.isEmpty()) {
+                                    try {
+                                        java.lang.reflect.Constructor<?> propCtor3 = profilePropertyClass2.getConstructor(String.class, String.class, String.class);
+                                        prop2 = propCtor3.newInstance("textures", originalValue, signature);
+                                    } catch (NoSuchMethodException ns) {
+                                        java.lang.reflect.Constructor<?> propCtor2 = profilePropertyClass2.getConstructor(String.class, String.class);
+                                        prop2 = propCtor2.newInstance("textures", originalValue);
+                                    }
+                                } else {
+                                    java.lang.reflect.Constructor<?> propCtor2 = profilePropertyClass2.getConstructor(String.class, String.class);
+                                    prop2 = propCtor2.newInstance("textures", encodedTexture);
+                                }
+                            } catch (NoSuchMethodException ignored) {}
+
+                            try {
+                                java.lang.reflect.Method addProp2 = playerProfileClass2.getMethod("addProperty", profilePropertyClass2);
+                                if (prop2 != null) addProp2.invoke(paperProfile2, prop2);
+                            } catch (NoSuchMethodException ex) {
+                                try {
+                                    java.lang.reflect.Method setProp2 = playerProfileClass2.getMethod("setProperty", profilePropertyClass2);
+                                    if (prop2 != null) setProp2.invoke(paperProfile2, prop2);
+                                } catch (NoSuchMethodException ex2) {
+                                    try {
+                                        java.lang.reflect.Method getProps2 = playerProfileClass2.getMethod("getProperties");
+                                        Object props = getProps2.invoke(paperProfile2);
+                                        if (props instanceof java.util.Collection && prop2 != null) {
+                                            ((java.util.Collection) props).add(prop2);
+                                        }
+                                    } catch (Exception ignored) {}
+                                }
+                            }
+
+                            // Create a fresh head and set the PlayerProfile on its meta
+                            ItemStack displayHead = new ItemStack(Material.PLAYER_HEAD);
+                            SkullMeta newMeta = (SkullMeta) displayHead.getItemMeta();
+                            try {
+                                java.lang.reflect.Method setPlayerProfile2 = newMeta.getClass().getMethod("setPlayerProfile", playerProfileClass2);
+                                setPlayerProfile2.invoke(newMeta, paperProfile2);
+                                displayHead.setItemMeta(newMeta);
+                                // Use this head for display instead of trying to mutate the original meta
+                                item = displayHead;
+                                meta = newMeta;
+                                plugin.getLogger().info("Applied custom head for rank " + rankKey + " by creating a display-only head");
+                            } catch (Exception ignored) {
+                                // ignore - will fall through to warning
+                            }
+                        } catch (Exception ignored) {}
+
+                        plugin.getLogger().warning("Could not set GameProfile into SkullMeta implementation; attempted Paper fallback.");
+                    }
                 } else {
                     // Try Paper's PlayerProfile API as a fallback (use reflection so plugin still runs on Spigot)
                     try {
@@ -235,7 +407,7 @@ public class RankGUI implements Listener {
                     // If the field wasn't found, log a helpful warning so the server admin can see why
                     plugin.getLogger().warning("Could not find 'profile' field on SkullMeta implementation; head for rank " + rankKey + " will be default Steve.");
                 }
-            } catch (IllegalAccessException | IllegalArgumentException | SecurityException e) {
+            } catch (IllegalArgumentException | SecurityException e) {
                 final String error = e.getMessage();
                 final String rank = rankKey;
                 plugin.getLogger().warning(() -> String.format("Failed to set Base64 head for rank %s: %s", rank, error));
@@ -351,6 +523,137 @@ public class RankGUI implements Listener {
         StringBuilder sb = new StringBuilder();
         sb.append("Searching in object type: ").append(obj.getClass().getName());
         plugin.getLogger().info(sb.toString());
+
+        // Handle ItemStack (we may have stored the full ItemStack in config)
+        if (obj instanceof ItemStack item) {
+            try {
+                var meta = item.getItemMeta();
+                if (meta instanceof SkullMeta skullMeta) {
+                    // Try Paper's PlayerProfile API first (reflection to stay compatible)
+                    try {
+                        java.lang.reflect.Method getPlayerProfile = skullMeta.getClass().getMethod("getPlayerProfile");
+                        try {
+                            Object paperProfile = getPlayerProfile.invoke(skullMeta);
+                            if (paperProfile != null) {
+                                try {
+                                    java.lang.reflect.Method getProperties = paperProfile.getClass().getMethod("getProperties");
+                                    try {
+                                        Object props = getProperties.invoke(paperProfile);
+                                        if (props instanceof Iterable<?> iterable) {
+                                            for (Object prop : iterable) {
+                                                try {
+                                                    java.lang.reflect.Method getName = prop.getClass().getMethod("getName");
+                                                    java.lang.reflect.Method getValue = prop.getClass().getMethod("getValue");
+                                                    java.lang.reflect.Method getSignature = prop.getClass().getMethod("getSignature");
+                                                    try {
+                                                        Object name = getName.invoke(prop);
+                                                        if ("textures".equals(name)) {
+                                                            Object value = getValue.invoke(prop);
+                                                            Object signature = getSignature.invoke(prop);
+                                                            return new TextureData(value == null ? null : value.toString(), signature == null ? null : signature.toString());
+                                                        }
+                                                    } catch (Exception ignored) {}
+                                                } catch (Exception ignored) {
+                                                    // try other shapes below
+                                                }
+                                            }
+                                        }
+                                    } catch (Exception ignored) {}
+                                } catch (Exception ignored) {}
+                            }
+                        } catch (Exception ignored) {}
+                    } catch (NoSuchMethodException ignored) {
+                        // getPlayerProfile not available, fallthrough to reflection on underlying profile field
+                    }
+
+                    // Try to reflectively read a 'profile' field (GameProfile/CraftPlayerProfile)
+                    Class<?> clazz = skullMeta.getClass();
+                    while (clazz != null) {
+                        try {
+                            java.lang.reflect.Field pf = clazz.getDeclaredField("profile");
+                            pf.setAccessible(true);
+                            Object gp = pf.get(skullMeta);
+                            if (gp != null) {
+                                // If this is a com.mojang.authlib.GameProfile, inspect its properties map
+                                try {
+                                    java.lang.reflect.Method getProperties = gp.getClass().getMethod("getProperties");
+                                    try {
+                                        Object propMap = getProperties.invoke(gp);
+                                        if (propMap != null) {
+                                            // com.mojang.authlib.PropertyMap implements Iterable<Property>
+                                            if (propMap instanceof java.util.Map<?, ?> map) {
+                                                Object textures = map.get("textures");
+                                                if (textures instanceof com.mojang.authlib.properties.Property prop) {
+                                                    return new TextureData(prop.getValue(), prop.getSignature());
+                                                }
+                                            } else if (propMap instanceof Iterable<?> iterable) {
+                                                for (Object p : iterable) {
+                                                    try {
+                                                        java.lang.reflect.Method getName = p.getClass().getMethod("getName");
+                                                        java.lang.reflect.Method getValue = p.getClass().getMethod("getValue");
+                                                        java.lang.reflect.Method getSignature = p.getClass().getMethod("getSignature");
+                                                        try {
+                                                            Object name = getName.invoke(p);
+                                                            if ("textures".equals(name)) {
+                                                                Object value = getValue.invoke(p);
+                                                                Object signature = getSignature.invoke(p);
+                                                                return new TextureData(value == null ? null : value.toString(), signature == null ? null : signature.toString());
+                                                            }
+                                                        } catch (Exception ignored) {}
+                                                    } catch (Exception ignored) {}
+                                                }
+                                            }
+                                        }
+                                    } catch (Exception ignored) {}
+                                } catch (NoSuchMethodException ignored) {
+                                    // If gp isn't GameProfile-like, keep searching
+                                }
+                            }
+                        } catch (NoSuchFieldException | IllegalAccessException ignored) {
+                            // continue up the class hierarchy
+                        }
+                        clazz = clazz.getSuperclass();
+                    }
+
+                    // If reflective introspection didn't yield a property map, try parsing the profile object's toString
+                    // This helps with CraftPlayerProfile / net.minecraft wrappers that expose properties only in toString
+                    try {
+                        // search for any 'profile' field value in the class hierarchy again to get the last one
+                        Class<?> c2 = skullMeta.getClass();
+                        Object lastProfileObj = null;
+                        while (c2 != null) {
+                            try {
+                                java.lang.reflect.Field pf2 = c2.getDeclaredField("profile");
+                                pf2.setAccessible(true);
+                                Object gp2 = pf2.get(skullMeta);
+                                if (gp2 != null) lastProfileObj = gp2;
+                            } catch (NoSuchFieldException | IllegalAccessException ignored) {}
+                            c2 = c2.getSuperclass();
+                        }
+                        if (lastProfileObj != null) {
+                            String s = lastProfileObj.toString();
+                            java.util.regex.Pattern p = java.util.regex.Pattern.compile("value=([A-Za-z0-9+/=]+)");
+                            java.util.regex.Matcher m = p.matcher(s);
+                            String foundValue = null;
+                            String foundSig = null;
+                            if (m.find()) foundValue = m.group(1);
+                            java.util.regex.Pattern p2 = java.util.regex.Pattern.compile("signature=([A-Za-z0-9+/=]+|null)");
+                            java.util.regex.Matcher m2 = p2.matcher(s);
+                            if (m2.find()) {
+                                foundSig = m2.group(1);
+                                if ("null".equals(foundSig)) foundSig = null;
+                            }
+                            if (foundValue != null) {
+                                return new TextureData(foundValue, foundSig);
+                            }
+                        }
+                    } catch (Exception ignored) {}
+
+                }
+            } catch (SecurityException ignored) {
+                // fall through to other handlers
+            }
+        }
 
         // Handle MemorySection (from YAML config)
         if (obj instanceof org.bukkit.configuration.ConfigurationSection section) {
