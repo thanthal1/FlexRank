@@ -47,10 +47,46 @@ public class RankGUI implements Listener {
     public void openGUI(Player player) {
     plugin.reloadConfig(); // Ensure we have latest config data
     List<String> ranks = rankManager.getRankList();
-    int size = ((ranks.size() / 9) + 1) * 9;
+    // Determine GUI size: prefer explicit config value, otherwise compute smallest multiple
+    // of 9 that fits all ranks.
+    int configuredSize = plugin.getConfig().getInt("gui.size", -1);
+    int size;
+    if (configuredSize > 0) {
+        // ensure size is a multiple of 9 and at least 9
+        int mult = Math.max(1, configuredSize / 9);
+        size = Math.max(9, mult * 9);
+        if (configuredSize % 9 != 0) size += 9; // round up
+    } else {
+        size = ((ranks.size() / 9) + 1) * 9;
+    }
+
     Inventory inv = Bukkit.createInventory(new RankInventoryHolder(), size, "§6Ranks");
     String currentRank = rankManager.getPlayerRank(player);
 
+    // Read configured layout (rankKey -> slot index) if present
+    java.util.Map<String, Integer> configuredSlots = new java.util.HashMap<>();
+    if (plugin.getConfig().isConfigurationSection("gui.layout")) {
+        ConfigurationSection layout = plugin.getConfig().getConfigurationSection("gui.layout");
+        for (String key : layout.getKeys(false)) {
+            try {
+                int s = layout.getInt(key, -1);
+                if (s >= 0 && s < size) configuredSlots.put(key, s);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    // Track used slots
+    boolean[] used = new boolean[size];
+
+    // First place ranks that have explicit slots
+    for (String rankKey : ranks) {
+        Integer slot = configuredSlots.get(rankKey);
+        if (slot != null) {
+            used[slot] = true;
+        }
+    }
+
+    // Now iterate ranks and place them in either configured slot or next available slot
     for (int i = 0; i < ranks.size(); i++) {
         String rankKey = ranks.get(i);
 
@@ -454,7 +490,23 @@ public class RankGUI implements Listener {
             item.setItemMeta(meta);
         }
 
-        inv.setItem(i, item);
+        // Determine target slot
+        Integer cfgSlot = configuredSlots.get(rankKey);
+        int targetSlot;
+        if (cfgSlot != null && cfgSlot >= 0 && cfgSlot < size) {
+            targetSlot = cfgSlot;
+        } else {
+            // find next free slot
+            targetSlot = -1;
+            for (int s = 0; s < size; s++) {
+                if (!used[s]) { targetSlot = s; break; }
+            }
+            if (targetSlot == -1) targetSlot = Math.min(i, size - 1);
+        }
+
+        // mark used and place
+        if (targetSlot >= 0 && targetSlot < size) used[targetSlot] = true;
+        inv.setItem(targetSlot, item);
     }
 
     player.openInventory(inv);

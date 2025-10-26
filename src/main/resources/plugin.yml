@@ -6,6 +6,7 @@ author: Thanthal
 description: A flexible rank system with GUI support for Minecraft.
 
 softdepend:
+  - Vault
   - PlaceholderAPI
 
 commands:
@@ -39,6 +40,12 @@ commands:
     permission: flexrank.setrank
     permission-message: You don't have permission to use this command.
 
+  rank:
+    description: Administrative rank commands (reload)
+    usage: /rank reload
+    permission: flexrank.reload
+    permission-message: You don't have permission to use this command.
+
 permissions:
   flexrank.rankup:
     description: Allows a player to use /rankup
@@ -58,4 +65,8 @@ permissions:
 
   flexrank.dumphead:
     description: Allows admins to dump raw head configs for debugging
+    default: op
+
+  flexrank.reload:
+    description: Allows admins to reload the plugin configuration
     default: op

@@ -1,5 +1,6 @@
 com\thanthal\flexrank\gui\RankGUI.class
 com\thanthal\flexrank\commands\RankupCommand.class
+com\thanthal\flexrank\commands\RankCommand.class
 com\thanthal\flexrank\data\RankManager.class
 com\thanthal\flexrank\FlexRank.class
 com\thanthal\flexrank\gui\RankGUI$TextureData.class

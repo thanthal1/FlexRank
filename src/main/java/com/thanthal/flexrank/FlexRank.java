@@ -1,6 +1,7 @@
 package com.thanthal.flexrank;
 
 import com.thanthal.flexrank.commands.RankupCommand;
+import com.thanthal.flexrank.commands.RankCommand;
 import com.thanthal.flexrank.data.RankManager;
 import com.thanthal.flexrank.gui.RankGUI;
 import net.milkbowl.vault.economy.Economy;
@@ -33,10 +34,26 @@ public class FlexRank extends JavaPlugin {
         saveResource("config.yml", false); // Ensure config exists
         reloadConfig(); // Load latest config
 
-        if (!setupEconomy()) {
-            getLogger().severe("Vault not found — disabling plugin!");
-            Bukkit.getPluginManager().disablePlugin(this);
-            return;
+        // Determine whether any rank uses currency (cost > 0). If so, Vault is required.
+        boolean needsEconomy = false;
+        if (getConfig().isConfigurationSection("ranks")) {
+            for (String rk : getConfig().getConfigurationSection("ranks").getKeys(false)) {
+                if (getConfig().getDouble("ranks." + rk + ".cost", 0) > 0) {
+                    needsEconomy = true;
+                    break;
+                }
+            }
+        }
+
+        if (needsEconomy) {
+            if (!setupEconomy()) {
+                getLogger().severe("Vault not found — disabling plugin because a rank requires currency!");
+                Bukkit.getPluginManager().disablePlugin(this);
+                return;
+            }
+        } else {
+            // Economy not required by config; try to initialize Vault if present but don't fail if absent.
+            setupEconomy(); // best-effort; economy remains null if not available
         }
 
         this.rankManager = new RankManager(this);
@@ -344,6 +361,9 @@ public class FlexRank extends JavaPlugin {
             return true;
         });
 
+    // Command group for administrative rank-related subcommands (e.g. /rank reload)
+    getCommand("rank").setExecutor(new RankCommand(this));
+
     // FlexRank loaded (info logs suppressed)
     }
 
@@ -361,6 +381,39 @@ public class FlexRank extends JavaPlugin {
 
     public Economy getEconomy() {
         return economy;
+    }
+
+    /**
+     * Reload plugin configuration, reinitialize economy (best-effort) and rebuild
+     * RankManager and RankGUI instances. This is intended to be called on the main thread.
+     */
+    public void reloadAll() {
+        // Reload config file
+        reloadConfig();
+
+        // Re-evaluate economy need
+        boolean needsEconomy = false;
+        if (getConfig().isConfigurationSection("ranks")) {
+            for (String rk : getConfig().getConfigurationSection("ranks").getKeys(false)) {
+                if (getConfig().getDouble("ranks." + rk + ".cost", 0) > 0) {
+                    needsEconomy = true;
+                    break;
+                }
+            }
+        }
+
+        if (needsEconomy) {
+            if (!setupEconomy()) {
+                getLogger().warning("Vault not found — economy features will be unavailable until Vault is installed.");
+            }
+        } else {
+            // Best-effort init if present
+            setupEconomy();
+        }
+
+        // Recreate managers so runtime config changes take effect
+        this.rankManager = new com.thanthal.flexrank.data.RankManager(this);
+        this.rankGUI = new com.thanthal.flexrank.gui.RankGUI(this);
     }
 
     private boolean setupEconomy() {
