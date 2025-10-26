@@ -130,4 +130,19 @@ public class RankManager {
         if (idx + 1 >= ranks.size()) return null;
         return ranks.get(idx + 1);
     }
+
+    /**
+     * Sets a player's rank directly (for admin use)
+     */
+    public void setPlayerRank(Player player, String rankKey) {
+        playerRanks.put(player.getUniqueId(), rankKey);
+        plugin.getConfig().set("players." + player.getUniqueId(), rankKey);
+        plugin.saveConfig();
+
+        // Execute rank commands if any
+        for (String cmd : getRankCommands(rankKey)) {
+            String parsed = cmd.replace("%player_name%", player.getName());
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), parsed);
+        }
+    }
 }

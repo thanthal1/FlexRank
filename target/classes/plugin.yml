@@ -1,7 +1,7 @@
 name: FlexRank
 version: 1.0.0
 main: com.thanthal.flexrank.FlexRank
-api-version: 1.20
+api-version: 1.21
 author: Thanthal
 description: A flexible rank system with GUI support for Minecraft.
 
@@ -18,10 +18,41 @@ commands:
     permission: flexrank.rankgui
     permission-message: You don’t have permission to use this command.
 
+  setrankitem:
+    description: Sets the head for a rank from the item in hand
+    usage: /setrankitem <rank>
+    permission: flexrank.setrankhead
+    permission-message: You don’t have permission to use this command.
+
+  dumphead:
+    description: Dump the raw head config for a rank (admin debug)
+    usage: /dumphead <rank>
+    permission: flexrank.dumphead
+    permission-message: You don't have permission to use this command.
+
+  setrank:
+    description: Forcibly set a player's rank (admin)
+    usage: /setrank <player> <rank>
+    permission: flexrank.setrank
+    permission-message: You don't have permission to use this command.
+
 permissions:
   flexrank.rankup:
     description: Allows a player to use /rankup
     default: true
+
   flexrank.rankgui:
     description: Allows a player to open the rank GUI
     default: true
+
+  flexrank.setrankhead:
+    description: Allows admins to set a rank head from the item in hand
+    default: op
+
+  flexrank.setrank:
+    description: Allows admins to forcibly set player ranks
+    default: op
+
+  flexrank.dumphead:
+    description: Allows admins to dump raw head configs for debugging
+    default: op
