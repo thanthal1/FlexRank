@@ -6,6 +6,17 @@ import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
+import java.io.File;
+import java.io.IOException;
+import java.util.UUID;
+import java.util.HashMap;
+import java.util.Map;
+
+
+
+
 import java.util.*;
 
 public class RankManager {
@@ -14,9 +25,34 @@ public class RankManager {
     private final Economy economy;
     private final Map<UUID, String> playerRanks = new HashMap<>();
 
+    private File playersFile;
+    private FileConfiguration playersConfig;
+
     public RankManager(FlexRank plugin) {
         this.plugin = plugin;
         this.economy = plugin.getEconomy();
+        
+        playersFile = new File(plugin.getDataFolder(), "players.yml");
+    if (!playersFile.exists()) {
+        try {
+            playersFile.createNewFile();
+        } catch (IOException e) {
+         e.printStackTrace();
+        }
+    }
+    
+    playersConfig = YamlConfiguration.loadConfiguration(playersFile);
+    
+    // Load player ranks from players.yml
+    if (playersConfig.isConfigurationSection("players")) {
+        for (String uuidStr : playersConfig.getConfigurationSection("players").getKeys(false)) {
+            UUID uuid = UUID.fromString(uuidStr);
+            String rank = playersConfig.getString("players." + uuidStr);
+            if (rank != null) playerRanks.put(uuid, rank);
+    }
+}
+
+
 
         if (plugin.getConfig().isConfigurationSection("players")) {
             for (String uuidStr : plugin.getConfig().getConfigurationSection("players").getKeys(false)) {
@@ -26,6 +62,15 @@ public class RankManager {
             }
         }
     }
+
+    private void savePlayers() {
+    try {
+        playersConfig.save(playersFile);
+    } catch (IOException e) {
+        e.printStackTrace();
+    }
+}
+
 
     public List<String> getRankList() {
         if (!plugin.getConfig().isConfigurationSection("ranks")) return new ArrayList<>();
@@ -119,9 +164,8 @@ public class RankManager {
 
         // Save rank
         playerRanks.put(player.getUniqueId(), rankKey);
-        plugin.getConfig().set("players." + player.getUniqueId(), rankKey);
-        plugin.saveConfig();
-
+        playersConfig.set("players." + player.getUniqueId(), rankKey);
+        savePlayers();
         // Execute rank commands
         for (String cmd : getRankCommands(rankKey)) {
             String parsed = cmd.replace("%player_name%", player.getName());
@@ -146,8 +190,8 @@ public class RankManager {
      */
     public void setPlayerRank(Player player, String rankKey) {
         playerRanks.put(player.getUniqueId(), rankKey);
-        plugin.getConfig().set("players." + player.getUniqueId(), rankKey);
-        plugin.saveConfig();
+        playersConfig.set("players." + player.getUniqueId(), rankKey);
+        savePlayers();
 
         // Execute rank commands if any
         for (String cmd : getRankCommands(rankKey)) {
