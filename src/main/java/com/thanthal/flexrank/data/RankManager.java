@@ -65,8 +65,18 @@ public class RankManager {
 
     public double getPlayerProgress(Player player, String placeholder) {
         try {
-            String raw = PlaceholderAPI.setPlaceholders(player, placeholder);
-            return Double.parseDouble(raw.replaceAll("[^0-9.]", ""));
+            // If PlaceholderAPI is present on the server, use it. Otherwise fall back to a safe parse of
+            // the placeholder string so the plugin works without PlaceholderAPI installed.
+            if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
+                String raw = PlaceholderAPI.setPlaceholders(player, placeholder);
+                if (raw == null) return 0;
+                String num = raw.replaceAll("[^0-9.]", "");
+                return num.isEmpty() ? 0 : Double.parseDouble(num);
+            } else {
+                // Attempt to extract numeric characters directly from the placeholder string
+                String num = placeholder == null ? "" : placeholder.replaceAll("[^0-9.]", "");
+                return num.isEmpty() ? 0 : Double.parseDouble(num);
+            }
         } catch (Exception e) {
             return 0;
         }

@@ -6,7 +6,6 @@ import com.thanthal.flexrank.gui.RankGUI;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
-import org.bukkit.configuration.serialization.ConfigurationSerialization;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.SkullMeta;
@@ -17,7 +16,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.Map;
-import java.util.Objects;
 import java.io.File;
 import org.bukkit.configuration.file.YamlConfiguration;
 
@@ -75,29 +73,27 @@ public class FlexRank extends JavaPlugin {
             String rankNumber = args[0];
             ItemStack itemInHand = player.getInventory().getItemInMainHand();
 
-            if (itemInHand == null || itemInHand.getType() == Material.AIR) {
+            // Bukkit's Inventory#getItemInMainHand returns a non-null ItemStack (AIR when empty),
+            // so only check for AIR here.
+            if (itemInHand.getType() == Material.AIR) {
                 player.sendMessage("§cYou must be holding an item!");
                 return true;
             }
 
-            // Save just the texture data, not the full item
-            if (itemInHand.getType() != Material.PLAYER_HEAD) {
-                player.sendMessage("§cMust be holding a player head!");
-                return true;
-            }
-
-            SkullMeta meta = (SkullMeta) itemInHand.getItemMeta();
-            if (meta == null) {
-                player.sendMessage("§cInvalid skull item!");
-                return true;
-            }
-
-            // Extract the texture value from the skull
+            // Allow any item to be used for a rank. If it's a player head, attempt to
+            // extract texture data; otherwise we'll simply save the item as-is.
+            SkullMeta meta = null;
             String textureValue = null;
-            
-            // Try Paper's PlayerProfile API first (modern method)
-            var playerProfile = meta.getPlayerProfile();
-            if (playerProfile != null) {
+            if (itemInHand.getType() == Material.PLAYER_HEAD) {
+                meta = (SkullMeta) itemInHand.getItemMeta();
+                if (meta == null) {
+                    player.sendMessage("§cInvalid skull item!");
+                    return true;
+                }
+
+                // Try Paper's PlayerProfile API first (modern method)
+                var playerProfile = meta.getPlayerProfile();
+                if (playerProfile != null) {
                 try {
                     var textures = playerProfile.getTextures();
                     if (textures != null) {
@@ -116,67 +112,62 @@ public class FlexRank extends JavaPlugin {
                     // Fall through to reflection method
                 }
             }
-            
-            // Fallback to reflection if Paper API didn't work
-            if (textureValue == null) {
-                try {
-                    // Try to get GameProfile
-                    Field profileField = null;
-                    Class<?> clazz = meta.getClass();
-                    while (clazz != null) {
-                        try {
-                            profileField = clazz.getDeclaredField("profile");
-                            break;
-                        } catch (NoSuchFieldException ignored) {
-                            clazz = clazz.getSuperclass();
-                        }
-                    }
-
-                    if (profileField != null) {
-                        profileField.setAccessible(true);
-                        Object profile = profileField.get(meta);
-                        if (profile != null) {
+                // Fallback to reflection if Paper API didn't work
+                if (textureValue == null) {
+                    try {
+                        // Try to get GameProfile
+                        Field profileField = null;
+                        Class<?> clazz = meta.getClass();
+                        while (clazz != null) {
                             try {
-                                // First try Paper-specific method
-                                Method getPropertiesMethod = profile.getClass().getMethod("getProperties");
-                                Object properties = getPropertiesMethod.invoke(profile);
-                                if (properties != null) {
-                                    Method getMethod = properties.getClass().getMethod("get", String.class);
-                                    Collection<?> textures = (Collection<?>) getMethod.invoke(properties, "textures");
-                                    if (textures != null && !textures.isEmpty()) {
-                                        Object property = textures.iterator().next();
-                                        // The getValue() result should already be Base64 encoded
-                                        textureValue = (String) property.getClass().getMethod("getValue").invoke(property);
-                                    }
-                                }
-                            } catch (NoSuchMethodException | IllegalAccessException | java.lang.reflect.InvocationTargetException e) {
-                                // If Paper method fails, try Bukkit/Spigot method
+                                profileField = clazz.getDeclaredField("profile");
+                                break;
+                            } catch (NoSuchFieldException ignored) {
+                                clazz = clazz.getSuperclass();
+                            }
+                        }
+
+                        if (profileField != null) {
+                            profileField.setAccessible(true);
+                            Object profile = profileField.get(meta);
+                            if (profile != null) {
                                 try {
-                                    Class<?> propertyMapClass = Class.forName("com.mojang.authlib.properties.PropertyMap");
-                                    Object properties = profile.getClass().getMethod("getProperties").invoke(profile);
-                                    if (properties != null && propertyMapClass.isInstance(properties)) {
-                                        Collection<?> textures = (Collection<?>) propertyMapClass.getMethod("get", Object.class).invoke(properties, "textures");
+                                    // First try Paper-specific method
+                                    Method getPropertiesMethod = profile.getClass().getMethod("getProperties");
+                                    Object properties = getPropertiesMethod.invoke(profile);
+                                    if (properties != null) {
+                                        Method getMethod = properties.getClass().getMethod("get", String.class);
+                                        Collection<?> textures = (Collection<?>) getMethod.invoke(properties, "textures");
                                         if (textures != null && !textures.isEmpty()) {
                                             Object property = textures.iterator().next();
+                                            // The getValue() result should already be Base64 encoded
                                             textureValue = (String) property.getClass().getMethod("getValue").invoke(property);
                                         }
                                     }
-                                } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | java.lang.reflect.InvocationTargetException ignored) {
-                                    // Both methods failed
+                                } catch (NoSuchMethodException | IllegalAccessException | java.lang.reflect.InvocationTargetException e) {
+                                    // If Paper method fails, try Bukkit/Spigot method
+                                    try {
+                                        Class<?> propertyMapClass = Class.forName("com.mojang.authlib.properties.PropertyMap");
+                                        Object properties = profile.getClass().getMethod("getProperties").invoke(profile);
+                                        if (properties != null && propertyMapClass.isInstance(properties)) {
+                                            Collection<?> textures = (Collection<?>) propertyMapClass.getMethod("get", Object.class).invoke(properties, "textures");
+                                            if (textures != null && !textures.isEmpty()) {
+                                                Object property = textures.iterator().next();
+                                                textureValue = (String) property.getClass().getMethod("getValue").invoke(property);
+                                            }
+                                        }
+                                    } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | java.lang.reflect.InvocationTargetException ignored) {
+                                        // Both methods failed
+                                    }
                                 }
                             }
                         }
+                    } catch (IllegalAccessException | SecurityException ex) {
+                        getLogger().warning(String.format("Failed to extract texture from skull: %s", ex.getMessage()));
+                        player.sendMessage("§cFailed to extract texture from skull. See console for details.");
+                        return true;
                     }
-                } catch (IllegalAccessException | SecurityException ex) {
-                    getLogger().warning(String.format("Failed to extract texture from skull: %s", ex.getMessage()));
-                    player.sendMessage("§cFailed to extract texture from skull. See console for details.");
-                    return true;
                 }
-            }
-
-            if (textureValue == null) {
-                player.sendMessage("§cNo texture found in this skull!");
-                return true;
             }
 
             // Save the full ItemStack asynchronously so we don't block the server thread.
@@ -227,12 +218,12 @@ public class FlexRank extends JavaPlugin {
             Object raw = getConfig().get(path);
             if (raw == null) {
                 sender.sendMessage("§cNo head configured for rank " + rankNumber + "");
-                getLogger().info("Dumphead: " + path + " = null");
+                // dumphead: no head configured for path
                 return true;
             }
 
             // Log raw config node info
-            getLogger().info("Dumphead: " + path + " -> type=" + raw.getClass().getName() + ", value=" + raw.toString());
+            // dumphead: raw config node present
             sender.sendMessage("§6[FlexRank] Raw type: §e" + raw.getClass().getName());
 
             // Try to get ItemStack via getItemStack
@@ -241,7 +232,7 @@ public class FlexRank extends JavaPlugin {
                 sender.sendMessage("§6[FlexRank] getItemStack returned: §cnull");
             } else {
                 sender.sendMessage("§6[FlexRank] getItemStack -> type=" + stack.getType() + ", amount=" + stack.getAmount());
-                getLogger().info("Dumphead: getItemStack -> " + stack);
+                // dumphead: getItemStack returned an ItemStack
                 if (stack.getItemMeta() instanceof SkullMeta sm) {
                     sender.sendMessage("§6[FlexRank] Item has SkullMeta");
 
@@ -281,7 +272,7 @@ public class FlexRank extends JavaPlugin {
                             profileField.setAccessible(true);
                             Object profile = profileField.get(sm);
                             if (profile != null) {
-                                getLogger().info("Dumphead: found GameProfile instance: " + profile.getClass().getName());
+                                // dumphead: found GameProfile instance
                                 try {
                                     Object properties = profile.getClass().getMethod("getProperties").invoke(profile);
                                     if (properties != null) {
@@ -353,7 +344,7 @@ public class FlexRank extends JavaPlugin {
             return true;
         });
 
-        getLogger().info("FlexRank loaded successfully!");
+    // FlexRank loaded (info logs suppressed)
     }
 
     public static FlexRank getInstance() {

@@ -2,7 +2,7 @@ package com.thanthal.flexrank.gui;
 
 import com.thanthal.flexrank.FlexRank;
 import com.thanthal.flexrank.data.RankManager;
-import me.clip.placeholderapi.PlaceholderAPI;
+
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -14,12 +14,11 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.SkullMeta;
-import com.mojang.authlib.GameProfile;
-import com.mojang.authlib.properties.Property;
+
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.UUID;
+
 
 import java.util.ArrayList;
 import java.util.List;
@@ -62,41 +61,40 @@ public class RankGUI implements Listener {
             ItemStack stored = plugin.getConfig().getItemStack("heads." + rankNumber);
             if (stored != null) {
                 item = stored.clone();
-                plugin.getLogger().info("Using stored ItemStack for rank " + rankNumber);
+                // plugin.getLogger().info("Using stored ItemStack for rank " + rankNumber);
             }
-        } catch (Exception ignored) {}
+    } catch (IllegalArgumentException | ClassCastException ignored) {}
         if (item == null) {
             // Create default player head
             item = new ItemStack(Material.PLAYER_HEAD);
         }
-    SkullMeta meta = (SkullMeta) item.getItemMeta();        // Get texture data from config (supports plain string or serialized ItemStack/map with signature)
+    org.bukkit.inventory.meta.ItemMeta meta = item.getItemMeta();        // Get texture data from config (supports plain string or serialized ItemStack/map with signature)
         Object rawHead = plugin.getConfig().get("heads." + rankNumber);
         TextureData textureData = null;
         if (rawHead == null) {
-            plugin.getLogger().info("No head configured for rank " + rankNumber + " (" + rankKey + ")");
+            // plugin.getLogger().info("No head configured for rank " + rankNumber + " (" + rankKey + ")");
         } else {
             if (rawHead instanceof String) {
                 textureData = new TextureData((String) rawHead, null);
             } else {
                 // Log the raw object so we can see what's stored in config
-                plugin.getLogger().info("Head config for rank " + rankNumber + " is type: " + rawHead.getClass().getName() + " -> " + rawHead.toString());
+                // plugin.getLogger().info("Head config for rank " + rankNumber + " is type: " + rawHead.getClass().getName() + " -> " + rawHead.toString());
                 // Try to find a texture value and optional signature inside the structure
                 textureData = findTextureDataInObject(rawHead);
             }
         }
 
-    if (textureData != null && textureData.value != null && !textureData.value.isEmpty() && meta != null) {
+    if (textureData != null && textureData.value != null && !textureData.value.isEmpty() && meta instanceof SkullMeta skullMeta) {
             // Log some debug info so server console shows why skull injection may fail
-            plugin.getLogger().info("Rank " + rankKey + " - SkullMeta implementation: " + meta.getClass().getName());
             try {
                 // list declared fields for debugging
-                Field[] declared = meta.getClass().getDeclaredFields();
+                Field[] declared = skullMeta.getClass().getDeclaredFields();
                 StringBuilder sb = new StringBuilder("Declared fields: ");
                 for (Field f : declared) sb.append(f.getName()).append(',');
-                plugin.getLogger().info(sb.toString());
+                // plugin.getLogger().info(sb.toString());
                 String originalValue = textureData.value;
                 String signature = textureData.signature;
-                plugin.getLogger().info("Base64 texture length: " + (originalValue == null ? 0 : originalValue.length()));
+                // plugin.getLogger().info("Base64 texture length: " + (originalValue == null ? 0 : originalValue.length()));
 
                 // Create GameProfile with texture. Prefer preserving signature if present (signed Mojang textures).
                 // GameProfile requires a non-null name in newer authlib versions. Use empty string.
@@ -106,7 +104,7 @@ public class RankGUI implements Listener {
                                 
                                 // First check if the value is a texture hash
                                 if (originalValue != null && originalValue.matches("^[0-9a-f]{64}$")) {
-                                    plugin.getLogger().info("Converting texture hash to full texture data");
+                                    // plugin.getLogger().info("Converting texture hash to full texture data");
                                     String textureJson = String.format("{\"textures\":{\"SKIN\":{\"url\":\"http://textures.minecraft.net/texture/%s\"}}}", originalValue);
                                     encodedTexture = Base64.getEncoder().encodeToString(textureJson.getBytes(StandardCharsets.UTF_8));
                                 } else if (originalValue != null) {
@@ -114,8 +112,8 @@ public class RankGUI implements Listener {
                                     try {
                                         byte[] decoded = Base64.getDecoder().decode(originalValue);
                                         String decodedStr = new String(decoded, StandardCharsets.UTF_8);
-                                        final String debugStr = decodedStr.length() > 200 ? decodedStr.substring(0, 200) + "..." : decodedStr;
-                                        plugin.getLogger().info(() -> String.format("Decoded texture payload: %s", debugStr));                        int urlIndex = decodedStr.indexOf("\"url\"");
+                                        // decoded payload (shortened for readability) was previously logged for debugging
+                        int urlIndex = decodedStr.indexOf("\"url\"");
                         String foundUrl = null;
                         if (urlIndex != -1) {
                             int colon = decodedStr.indexOf(':', urlIndex);
@@ -138,20 +136,19 @@ public class RankGUI implements Listener {
                             }
                         }
 
-                        if (foundUrl != null && !foundUrl.isEmpty()) {
-                            plugin.getLogger().info("Extracted skin URL: " + foundUrl);
+                            if (foundUrl != null && !foundUrl.isEmpty()) {
+                            // plugin.getLogger().info("Extracted skin URL: " + foundUrl);
                             String textureJson = String.format("{\"textures\":{\"SKIN\":{\"url\":\"%s\"}}}", foundUrl);
                             encodedTexture = Base64.getEncoder().encodeToString(textureJson.getBytes(StandardCharsets.UTF_8));
-                            final String textureValue = encodedTexture;
-                            plugin.getLogger().info(() -> String.format("Re-encoded texture JSON length: %d", textureValue.length()));
+                            // Re-encoded texture JSON stored in `encodedTexture` for later injection
                         } else {
-                            plugin.getLogger().info("No URL found inside decoded texture payload; using original base64");
+                            // plugin.getLogger().info("No URL found inside decoded texture payload; using original base64");
                         }
                     } catch (IllegalArgumentException iae) {
                         plugin.getLogger().warning("Provided texture string was not valid Base64; using original value");
                     }
                 } else {
-                    plugin.getLogger().info("Found texture signature present, preserving signed texture value");
+                    // plugin.getLogger().info("Found texture signature present, preserving signed texture value");
                 }
 
                 if (signature != null && !signature.isEmpty()) {
@@ -163,7 +160,7 @@ public class RankGUI implements Listener {
                 // Inject GameProfile into SkullMeta. The implementation class may keep the profile field
                 // on a superclass, so walk the class hierarchy to find it.
                 Field profileField = null;
-                Class<?> clazz = meta.getClass();
+                Class<?> clazz = skullMeta.getClass();
                 while (clazz != null) {
                     try {
                         profileField = clazz.getDeclaredField("profile");
@@ -176,8 +173,8 @@ public class RankGUI implements Listener {
                 if (profileField != null) {
                     profileField.setAccessible(true);
                     try {
-                        profileField.set(meta, profile);
-                        plugin.getLogger().info("Applied custom head for rank " + rankKey + " (in class " + profileField.getDeclaringClass().getName() + ")");
+                        profileField.set(skullMeta, profile);
+                        // plugin.getLogger().info("Applied custom head for rank " + rankKey + " (in class " + profileField.getDeclaringClass().getName() + ")");
                     } catch (IllegalArgumentException | IllegalAccessException iae) {
                         // Could not set GameProfile into the implementation's profile field (different internal type).
                         // Try to wrap the GameProfile into the server-specific CraftPlayerProfile wrapper if available
@@ -196,8 +193,8 @@ public class RankGUI implements Listener {
                                     try {
                                         java.lang.reflect.Constructor<?> ctor = craftProfileClass.getConstructor(com.mojang.authlib.GameProfile.class);
                                         Object craftProfile = ctor.newInstance(profile);
-                                        profileField.set(meta, craftProfile);
-                                        plugin.getLogger().info("Applied custom head for rank " + rankKey + " via CraftPlayerProfile wrapper");
+                                        profileField.set(skullMeta, craftProfile);
+                                        // plugin.getLogger().info("Applied custom head for rank " + rankKey + " via CraftPlayerProfile wrapper");
                                         wrapped = true;
                                         break;
                                     } catch (NoSuchMethodException ns) {
@@ -205,8 +202,8 @@ public class RankGUI implements Listener {
                                         try {
                                             java.lang.reflect.Method m = craftProfileClass.getMethod("asCraftPlayerProfile", com.mojang.authlib.GameProfile.class);
                                             Object craftProfile = m.invoke(null, profile);
-                                            profileField.set(meta, craftProfile);
-                                            plugin.getLogger().info("Applied custom head for rank " + rankKey + " via CraftPlayerProfile.asCraftPlayerProfile");
+                                            profileField.set(skullMeta, craftProfile);
+                                            // plugin.getLogger().info("Applied custom head for rank " + rankKey + " via CraftPlayerProfile.asCraftPlayerProfile");
                                             wrapped = true;
                                             break;
                                         } catch (NoSuchMethodException ns2) {
@@ -214,8 +211,8 @@ public class RankGUI implements Listener {
                                             try {
                                                 java.lang.reflect.Method m2 = craftProfileClass.getMethod("asCraftProfile", com.mojang.authlib.GameProfile.class);
                                                 Object craftProfile = m2.invoke(null, profile);
-                                                profileField.set(meta, craftProfile);
-                                                plugin.getLogger().info("Applied custom head for rank " + rankKey + " via CraftPlayerProfile.asCraftProfile");
+                                                profileField.set(skullMeta, craftProfile);
+                                                // plugin.getLogger().info("Applied custom head for rank " + rankKey + " via CraftPlayerProfile.asCraftProfile");
                                                 wrapped = true;
                                                 break;
                                             } catch (NoSuchMethodException ns3) {
@@ -228,7 +225,7 @@ public class RankGUI implements Listener {
                                 }
                             }
                             if (wrapped) continue;
-                        } catch (Exception wrapEx) {
+                        } catch (ReflectiveOperationException wrapEx) {
                             // ignore and fall back to Paper approach
                         }
                         // Try Paper's PlayerProfile API as a fallback (use reflection so plugin still runs on Spigot)
@@ -279,12 +276,12 @@ public class RankGUI implements Listener {
                             }
 
                             java.lang.reflect.Method setPlayerProfile = meta.getClass().getMethod("setPlayerProfile", playerProfileClass);
-                            setPlayerProfile.invoke(meta, paperProfile);
-                            plugin.getLogger().info("Applied custom head for rank " + rankKey + " via Paper PlayerProfile fallback");
+                            setPlayerProfile.invoke(skullMeta, paperProfile);
+                            // plugin.getLogger().info("Applied custom head for rank " + rankKey + " via Paper PlayerProfile fallback");
                         } catch (ClassNotFoundException cnf) {
                             // Paper API not present; will fall through to warning below
-                        } catch (Exception ex) {
-                            plugin.getLogger().warning("Paper PlayerProfile fallback failed for rank " + rankKey + ": " + ex.getMessage());
+                        } catch (ReflectiveOperationException | IllegalArgumentException ex) {
+                            // plugin.getLogger().warning("Paper PlayerProfile fallback failed for rank " + rankKey + ": " + ex.getMessage());
                         }
 
                         // Final fallback: create a new ItemStack (display-only) and set the PlayerProfile on its fresh SkullMeta.
@@ -325,7 +322,7 @@ public class RankGUI implements Listener {
                                         if (props instanceof java.util.Collection && prop2 != null) {
                                             ((java.util.Collection) props).add(prop2);
                                         }
-                                    } catch (Exception ignored) {}
+                                    } catch (ReflectiveOperationException | IllegalArgumentException ignored) {}
                                 }
                             }
 
@@ -339,11 +336,11 @@ public class RankGUI implements Listener {
                                 // Use this head for display instead of trying to mutate the original meta
                                 item = displayHead;
                                 meta = newMeta;
-                                plugin.getLogger().info("Applied custom head for rank " + rankKey + " by creating a display-only head");
-                            } catch (Exception ignored) {
+                                // plugin.getLogger().info("Applied custom head for rank " + rankKey + " by creating a display-only head");
+                                    } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
                                 // ignore - will fall through to warning
                             }
-                        } catch (Exception ignored) {}
+                            } catch (ReflectiveOperationException | IllegalArgumentException ignored) {}
 
                         plugin.getLogger().warning("Could not set GameProfile into SkullMeta implementation; attempted Paper fallback.");
                     }
@@ -396,16 +393,19 @@ public class RankGUI implements Listener {
                         }
 
                         java.lang.reflect.Method setPlayerProfile = meta.getClass().getMethod("setPlayerProfile", playerProfileClass);
-                        setPlayerProfile.invoke(meta, paperProfile);
-                        plugin.getLogger().info("Applied custom head for rank " + rankKey + " via Paper PlayerProfile fallback");
+                        setPlayerProfile.invoke(skullMeta, paperProfile);
+                        
                     } catch (ClassNotFoundException cnf) {
                         // Paper API not present; will fall through to warning below
-                    } catch (Exception ex) {
-                        plugin.getLogger().warning("Paper PlayerProfile fallback failed for rank " + rankKey + ": " + ex.getMessage());
+                    } catch (ReflectiveOperationException | IllegalArgumentException ex) {
+                        // Use parameterized log to avoid string concatenation; log the throwable separately to include stacktrace
+                        plugin.getLogger().log(java.util.logging.Level.WARNING, "Paper PlayerProfile fallback failed for rank {0}", new Object[]{rankKey});
+                        plugin.getLogger().log(java.util.logging.Level.WARNING, ex.getMessage(), ex);
                     }
 
                     // If the field wasn't found, log a helpful warning so the server admin can see why
-                    plugin.getLogger().warning("Could not find 'profile' field on SkullMeta implementation; head for rank " + rankKey + " will be default Steve.");
+                    // Use lazy supplier to avoid string concatenation when warning is disabled
+                    plugin.getLogger().log(java.util.logging.Level.WARNING, () -> "Could not find 'profile' field on SkullMeta implementation; head for rank " + rankKey + " will be default Steve.");
                 }
             } catch (IllegalArgumentException | SecurityException e) {
                 final String error = e.getMessage();
@@ -417,9 +417,7 @@ public class RankGUI implements Listener {
                 final String rank = rankKey;
                 plugin.getLogger().warning(() -> String.format("SkullMeta is null for rank item %s, skipping texture injection", rank));
             } else {
-                final String rank = rankKey;
-                final int number = rankNumber;
-                plugin.getLogger().info(() -> String.format("No texture/base64 present for rank %s (rank #%d) - showing default head", rank, number));
+                // No texture data to inject for this item; nothing to do here.
             }
         }
 
@@ -460,7 +458,6 @@ public class RankGUI implements Listener {
     }
 
     player.openInventory(inv);
-    plugin.getLogger().info(String.format("Opened rank GUI for player: %s", player.getName()));
 }
 
 
@@ -519,10 +516,9 @@ public class RankGUI implements Listener {
     private TextureData findTextureDataInObject(Object obj) {
         if (obj == null) return null;
 
-        // Log the path we're searching to debug the extraction
-        StringBuilder sb = new StringBuilder();
-        sb.append("Searching in object type: ").append(obj.getClass().getName());
-        plugin.getLogger().info(sb.toString());
+    // Searching in object type: used for debugging
+    StringBuilder sb = new StringBuilder();
+    sb.append("Searching in object type: ").append(obj.getClass().getName());
 
         // Handle ItemStack (we may have stored the full ItemStack in config)
         if (obj instanceof ItemStack item) {
@@ -552,16 +548,16 @@ public class RankGUI implements Listener {
                                                             Object signature = getSignature.invoke(prop);
                                                             return new TextureData(value == null ? null : value.toString(), signature == null ? null : signature.toString());
                                                         }
-                                                    } catch (Exception ignored) {}
-                                                } catch (Exception ignored) {
+                                                    } catch (ReflectiveOperationException | IllegalArgumentException ignored) {}
+                                                } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
                                                     // try other shapes below
                                                 }
                                             }
                                         }
-                                    } catch (Exception ignored) {}
-                                } catch (Exception ignored) {}
+                                    } catch (ReflectiveOperationException | IllegalArgumentException ignored) {}
+                                } catch (ReflectiveOperationException | IllegalArgumentException ignored) {}
                             }
-                        } catch (Exception ignored) {}
+                        } catch (ReflectiveOperationException | IllegalArgumentException ignored) {}
                     } catch (NoSuchMethodException ignored) {
                         // getPlayerProfile not available, fallthrough to reflection on underlying profile field
                     }
@@ -599,8 +595,8 @@ public class RankGUI implements Listener {
                                                                 Object signature = getSignature.invoke(p);
                                                                 return new TextureData(value == null ? null : value.toString(), signature == null ? null : signature.toString());
                                                             }
-                                                        } catch (Exception ignored) {}
-                                                    } catch (Exception ignored) {}
+                                                        } catch (ReflectiveOperationException | IllegalArgumentException ignored) {}
+                                                    } catch (ReflectiveOperationException | IllegalArgumentException ignored) {}
                                                 }
                                             }
                                         }
@@ -647,7 +643,7 @@ public class RankGUI implements Listener {
                                 return new TextureData(foundValue, foundSig);
                             }
                         }
-                    } catch (Exception ignored) {}
+                    } catch (IllegalArgumentException ignored) {}
 
                 }
             } catch (SecurityException ignored) {
@@ -657,7 +653,7 @@ public class RankGUI implements Listener {
 
         // Handle MemorySection (from YAML config)
         if (obj instanceof org.bukkit.configuration.ConfigurationSection section) {
-            plugin.getLogger().info(() -> "Config keys at " + section.getCurrentPath() + ": " + section.getKeys(false));
+            // debug: config keys at section (info logging suppressed)
 
             // First try components -> minecraft:profile -> properties path
             if (section.isConfigurationSection("components")) {
@@ -674,7 +670,7 @@ public class RankGUI implements Listener {
                                         Object value = propMap.get("value");
                                         Object signature = propMap.get("signature");
                                         if (value instanceof String val && signature instanceof String sig) {
-                                            plugin.getLogger().info("Found texture data in minecraft:profile.properties");
+                                            // found texture data in minecraft:profile.properties
                                             return new TextureData(val, sig);
                                         }
                                     }
@@ -690,7 +686,7 @@ public class RankGUI implements Listener {
                 String val = section.getString("value");
                 String sig = section.getString("signature");
                 if (val != null && val.length() >= 50 && val.matches("^[A-Za-z0-9+/=]+$")) {
-                    plugin.getLogger().info("Found texture data as direct config values");
+                    // found texture data as direct config values
                     return new TextureData(val, sig);
                 }
             }
@@ -722,7 +718,7 @@ public class RankGUI implements Listener {
                             Object value = propMap.get("value");
                             Object signature = propMap.get("signature");
                             if (value instanceof String val && signature instanceof String sig) {
-                                plugin.getLogger().info("Found texture data in properties array");
+                                // found texture data in properties array
                                 return new TextureData(val, sig);
                             }
                         }
@@ -735,7 +731,7 @@ public class RankGUI implements Listener {
                 Object val = map.get("value");
                 Object sig = map.get("signature");
                 if (val instanceof String value) {
-                    plugin.getLogger().info("Found texture data in direct property");
+                    // found texture data in direct property
                     return new TextureData(value, sig instanceof String ? (String) sig : null);
                 }
             }
